@@ -1,6 +1,6 @@
 # DeepWiki CLI Builder
 
-命令行工具，无需浏览器即可生成 Wiki。支持后台运行、断点续传、批量导出。
+命令行工具，无需浏览器即可生成 Wiki。默认使用 **Aliyun Coding** 的 **kimi-k2.5** 模型，无需嵌入模型即可运行。
 
 ## 特性
 
@@ -11,6 +11,7 @@
 - 💾 **自动保存** - 每页完成后自动保存到服务器缓存
 - 📄 **本地导出** - 同时生成 Markdown 文件
 - 🔄 **断点续传** - 支持重用服务器缓存
+- ✅ **零配置启动** - 默认使用 Aliyun Coding kimi-k2.5，无需 API Key
 
 ## 安装
 
@@ -26,57 +27,36 @@ chmod +x wiki-builder
 export PATH="$PATH:$(pwd)"
 ```
 
-## ⚠️ 重要：Embedder 配置
+## 使用方法
 
-DeepWiki 需要 **Embedder**（向量化模型）来分析代码仓库。**Embedder** 和 **LLM**（生成模型）是分开配置的。
-
-### 错误：`GOOGLE_API_KEY must be set`
-
-如果你遇到这个错误，说明后端没有配置 Embedder。
-
-### 解决方案（选一个）：
-
-#### 方案 1：使用 Ollama（推荐，本地免费）
+### 基本用法（推荐）
 
 ```bash
-# 1. 安装并启动 Ollama
-# https://ollama.ai
-
-# 2. 拉取嵌入模型
-ollama pull nomic-embed-text
-
-# 3. 设置环境变量
-export DEEPWIKI_EMBEDDER_TYPE=ollama
-
-# 4. 重新启动后端
-```
-
-#### 方案 2：使用 Google Embedder
-
-```bash
-export GOOGLE_API_KEY=your_google_api_key
-export DEEPWIKI_EMBEDDER_TYPE=google
-```
-
-#### 方案 3：使用 OpenAI Embedder
-
-```bash
-export OPENAI_API_KEY=your_openai_api_key
-export DEEPWIKI_EMBEDDER_TYPE=openai
-```
-
-### 使用 CLI 时传递配置
-
-```bash
-# 方法1：设置环境变量后运行
-export DEEPWIKI_EMBEDDER_TYPE=ollama
+# 最简单的用法 - 零配置，使用默认 Aliyun Coding kimi-k2.5
 python wiki_builder.py owner/repo
 
-# 方法2：使用 --no-rag 禁用向量化（更快但质量较低）
-python wiki_builder.py owner/repo --no-rag
+# 指定完整 URL
+python wiki_builder.py https://github.com/owner/repo
+
+# 生成中文 wiki
+python wiki_builder.py owner/repo --language zh
+
+# 生成详细版本（8-12页）
+python wiki_builder.py owner/repo --comprehensive
 ```
 
-## 使用方法
+### 使用其他模型
+
+```bash
+# 使用 OpenAI
+python wiki_builder.py owner/repo --provider openai --model gpt-4
+
+# 使用 Google
+python wiki_builder.py owner/repo --provider google --model gemini-2.5-flash
+
+# 使用 Ollama（本地）
+python wiki_builder.py owner/repo --provider ollama --model llama3
+```
 
 ### 基本用法
 
@@ -129,8 +109,8 @@ python wiki_builder.py owner/repo --no-cache
 | `repo` | 仓库地址（owner/repo、URL 或本地路径） | 必需 |
 | `--type` | 仓库类型：github/gitlab/bitbucket/local | github |
 | `--token` | 私有仓库访问令牌 | - |
-| `--provider` | 模型提供商 | google |
-| `--model` | 模型名称 | gemini-2.5-flash |
+| `--provider` | 模型提供商 | aliyun_coding |
+| `--model` | 模型名称 | kimi-k2.5 |
 | `--language` | 输出语言：en/zh/ja/es/kr/vi/fr/ru/pt-br | en |
 | `--server` | WebSocket 服务器地址 | ws://localhost:8091 |
 | `--comprehensive` | 生成详细版本（8-12页） | 否 |
@@ -138,14 +118,15 @@ python wiki_builder.py owner/repo --no-cache
 | `--excluded-files` | 排除的文件（逗号分隔） | - |
 | `-o, --output` | 输出目录 | 当前目录 |
 | `--no-cache` | 不保存到服务器缓存 | 否 |
-| `--no-rag` | 禁用 RAG（无需 embedder，但质量较低） | 否 |
+| `--rag` | 启用 RAG（需要 embedder，质量更高但更慢） | 否 |
 
 ## 示例
 
-### 示例 1：生成简洁版本
+### 示例 1：最简单的用法（默认配置）
 
 ```bash
-python wiki_builder.py facebook/react --language zh --model gemini-2.5-flash
+# 使用默认的 Aliyun Coding kimi-k2.5，无需任何配置
+python wiki_builder.py facebook/react --language zh
 ```
 
 ### 示例 2：生成详细版本
@@ -153,14 +134,33 @@ python wiki_builder.py facebook/react --language zh --model gemini-2.5-flash
 ```bash
 python wiki_builder.py kubernetes/kubernetes \
   --comprehensive \
-  --provider openai \
-  --model gpt-4 \
   --language zh \
   -o ~/wikis \
   --excluded-dirs "vendor,docs,_output"
 ```
 
-### 示例 3：后台运行
+### 示例 3：使用其他模型
+
+```bash
+# 使用 OpenAI GPT-4
+python wiki_builder.py owner/repo --provider openai --model gpt-4 --language zh
+
+# 使用 Google Gemini
+python wiki_builder.py owner/repo --provider google --model gemini-2.5-flash --language zh
+
+# 使用 Ollama（本地）
+python wiki_builder.py owner/repo --provider ollama --model llama3 --language zh
+```
+
+### 示例 4：启用 RAG（更高质量，但需要 embedder）
+
+```bash
+# 需要先配置 embedder（如 Ollama）
+export DEEPWIKI_EMBEDDER_TYPE=ollama
+python wiki_builder.py owner/repo --rag --language zh
+```
+
+### 示例 5：后台运行
 
 ```bash
 # 使用 nohup 后台运行
