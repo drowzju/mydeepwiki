@@ -763,36 +763,19 @@ This file contains...
             elif request.provider == "aliyun_coding":
                 logger.info(f"Starting Aliyun Coding API call with model: {request.model}")
                 try:
-                    # Get the response and handle it properly using the previously created api_kwargs
+                    # Get the response using non-streaming mode
                     logger.info(f"Calling model.acall with api_kwargs: {api_kwargs}")
                     response = await model.acall(
                         api_kwargs=api_kwargs, model_type=ModelType.LLM
                     )
-                    logger.info("model.acall returned successfully, starting to stream response")
+                    logger.info("model.acall returned successfully")
                     chunk_count = 0
-                    # AliyunCodingClient.acall with stream=True returns an async
-                    # generator of plain text chunks
+                    # AliyunCodingClient returns an async generator with single result
                     async for text in response:
                         if text:
                             await websocket.send_text(text)
                             chunk_count += 1
                     logger.info(f"Finished streaming {chunk_count} chunks from Aliyun Coding")
-
-                    # If no chunks received, try non-streaming mode as fallback
-                    if chunk_count == 0:
-                        logger.warning("No chunks received from streaming, trying non-streaming mode")
-                        api_kwargs_no_stream = api_kwargs.copy()
-                        api_kwargs_no_stream["stream"] = False
-                        non_stream_response = await model.acall(
-                            api_kwargs=api_kwargs_no_stream, model_type=ModelType.LLM
-                        )
-                        if hasattr(non_stream_response, 'data') and non_stream_response.data:
-                            await websocket.send_text(non_stream_response.data)
-                            logger.info(f"Sent non-streaming response: {len(non_stream_response.data)} chars")
-                        else:
-                            logger.error(f"Non-streaming response has no data: {non_stream_response}")
-                            await websocket.send_text("Error: Empty response from API")
-
                     # Explicitly close the WebSocket connection after the response is complete
                     await websocket.close()
                     logger.info("WebSocket closed after Aliyun Coding response")
@@ -982,7 +965,7 @@ This file contains...
                             await websocket.send_text(error_msg)
                     elif request.provider == "aliyun_coding":
                         try:
-                            # Create new api_kwargs with the simplified prompt
+                            # Create new api_kwargs with the simplified prompt (non-streaming)
                             fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
                                 input=simplified_prompt,
                                 model_kwargs=model_kwargs,
@@ -994,8 +977,7 @@ This file contains...
                                 api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
                             )
 
-                            # AliyunCodingClient.acall (stream=True) returns an async
-                            # generator of text chunks
+                            # AliyunCodingClient returns async generator with single result
                             async for text in fallback_response:
                                 if text:
                                     await websocket.send_text(text)

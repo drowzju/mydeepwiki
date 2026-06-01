@@ -139,78 +139,41 @@ class AliyunCodingClient(ModelClient):
     async def acall(
         self, api_kwargs: Dict = {}, model_type: ModelType = ModelType.UNDEFINED
     ) -> Any:
-        """Async call to the Aliyun Coding Plan API."""
+        """Async call to the Aliyun Coding Plan API.
+
+        Note: Streaming is not supported. Always uses non-streaming mode
+        and returns an async generator for compatibility.
+        """
         if model_type != ModelType.LLM:
             raise ValueError(f"model_type {model_type} is not supported")
 
         url = f"{self.base_url.rstrip('/')}/messages"
 
         try:
+            # Always use non-streaming mode for simplicity
+            api_kwargs_no_stream = api_kwargs.copy()
+            api_kwargs_no_stream["stream"] = False
+
             async with aiohttp.ClientSession() as session:
                 async with session.post(
                     url,
                     headers=self._get_headers(),
-                    json=api_kwargs,
+                    json=api_kwargs_no_stream,
                 ) as response:
                     if response.status != 200:
                         error_text = await response.text()
                         log.error(f"API error {response.status}: {error_text}")
                         raise Exception(f"API error {response.status}: {error_text}")
 
-                    if api_kwargs.get("stream", False):
-                        # For streaming, read all content before session closes
-                        chunks = []
-                        line_count = 0
-                        async for line in response.content:
-                            line = line.decode('utf-8').strip()
-                            line_count += 1
-                            log.debug(f"SSE line {line_count}: {line[:200]}")
-                            if line.startswith('data: '):
-                                data = line[6:]  # Remove 'data: ' prefix
-                                if data == '[DONE]':
-                                    log.info("Received [DONE] marker")
-                                    break
-                                try:
-                                    chunk = json.loads(data)
-                                    log.debug(f"Parsed chunk: {chunk}")
-                                    # Extract content from Anthropic format
-                                    if chunk.get('type') == 'content_block_delta':
-                                        delta = chunk.get('delta', {})
-                                        if delta.get('type') == 'text':
-                                            text = delta.get('text', '')
-                                            if text:
-                                                chunks.append(text)
-                                                log.debug(f"Extracted text delta: {text[:100]}")
-                                    elif chunk.get('type') == 'message':
-                                        content = chunk.get('content', [])
-                                        for item in content:
-                                            if item.get('type') == 'text':
-                                                text = item.get('text', '')
-                                                if text:
-                                                    chunks.append(text)
-                                                    log.debug(f"Extracted message text: {text[:100]}")
-                                    elif chunk.get('type') == 'message_start':
-                                        log.debug("Received message_start")
-                                    elif chunk.get('type') == 'message_delta':
-                                        log.debug(f"Received message_delta: {chunk}")
-                                    elif chunk.get('type') == 'message_stop':
-                                        log.debug("Received message_stop")
-                                    else:
-                                        log.debug(f"Unknown chunk type: {chunk.get('type')}")
-                                except json.JSONDecodeError as e:
-                                    log.warning(f"Failed to decode SSE data: {data}, error: {e}")
-                                    continue
-                        log.info(f"Total SSE lines processed: {line_count}, chunks collected: {len(chunks)}")
-                        if not chunks:
-                            log.warning("No chunks collected from streaming response")
-                        # Return an async generator that yields the collected chunks
-                        async def _yield_chunks():
-                            for chunk in chunks:
-                                yield chunk
-                        return _yield_chunks()
-                    else:
-                        response_data = await response.json()
-                        return self.parse_chat_completion(response_data)
+                    response_data = await response.json()
+                    result = self.parse_chat_completion(response_data)
+
+                    # Return async generator for compatibility with streaming interface
+                    async def _yield_result():
+                        if result.data:
+                            yield result.data
+
+                    return _yield_result()
 
         except Exception as e:
             log.error(f"Error calling Aliyun Coding API: {e}")
