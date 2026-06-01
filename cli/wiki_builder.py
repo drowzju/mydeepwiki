@@ -187,8 +187,83 @@ class WikiBuilder:
 
         except Exception as e:
             print(f"\n✗ Error parsing wiki structure: {e}")
-            print(f"Raw response:\n{response[:500]}...")
+            print(f"Response length: {len(response)} chars")
+            print(f"Full response saved to debug_response.txt")
+            with open('debug_response.txt', 'w', encoding='utf-8') as f:
+                f.write(response)
+
+            # Try to fix incomplete XML
+            print("\nAttempting to fix incomplete XML...")
+            fixed_response = self._fix_incomplete_xml(response)
+            if fixed_response:
+                try:
+                    root = ET.fromstring(fixed_response)
+                    wiki_structure = {
+                        "id": root.get("id", "wiki"),
+                        "title": root.findtext("title", ""),
+                        "description": root.findtext("description", ""),
+                        "pages": []
+                    }
+                    for page_elem in root.findall(".//page"):
+                        page = {
+                            "id": page_elem.get("id", ""),
+                            "title": page_elem.findtext("title", ""),
+                            "description": page_elem.findtext("description", ""),
+                            "importance": page_elem.findtext("importance", "medium"),
+                            "filePaths": [],
+                            "relatedPages": []
+                        }
+                        files_elem = page_elem.find("relevant_files")
+                        if files_elem:
+                            page["filePaths"] = [f.text for f in files_elem.findall("file_path") if f.text]
+                        related_elem = page_elem.find("related_pages")
+                        if related_elem:
+                            page["relatedPages"] = [r.text for r in related_elem.findall("related") if r.text]
+                        wiki_structure["pages"].append(page)
+
+                    self.wiki_structure = wiki_structure
+                    print(f"✓ Fixed and parsed wiki structure with {len(wiki_structure['pages'])} pages")
+                    return wiki_structure
+                except Exception as fix_e:
+                    print(f"✗ Could not fix XML: {fix_e}")
+
             return None
+
+    def _fix_incomplete_xml(self, response: str) -> Optional[str]:
+        """Try to fix incomplete XML by adding missing closing tags"""
+        # Find the last complete element
+        last_complete = response.rfind('>')
+        if last_complete == -1:
+            return None
+
+        # Truncate to last complete element
+        fixed = response[:last_complete + 1]
+
+        # Count unclosed tags
+        open_count = fixed.count('<wiki_structure>') + fixed.count('<page>') + fixed.count('<title>') + \
+                     fixed.count('<description>') + fixed.count('<importance>') + fixed.count('<relevant_files>') + \
+                     fixed.count('<file_path>') + fixed.count('<related_pages>') + fixed.count('<related>')
+        close_count = fixed.count('</wiki_structure>') + fixed.count('</page>') + fixed.count('</title>') + \
+                      fixed.count('</description>') + fixed.count('</importance>') + fixed.count('</relevant_files>') + \
+                      fixed.count('</file_path>') + fixed.count('</related_pages>') + fixed.count('</related>')
+
+        # Add missing closing tags in reverse order
+        if '<relevant_files>' in fixed and '</relevant_files>' not in fixed:
+            fixed += '</relevant_files>'
+        if '<related_pages>' in fixed and '</related_pages>' not in fixed:
+            fixed += '</related_pages>'
+        if '<page>' in fixed:
+            # Count pages
+            page_opens = fixed.count('<page')
+            page_closes = fixed.count('</page>')
+            for _ in range(page_opens - page_closes):
+                fixed += '</page>'
+        if '<pages>' in fixed and '</pages>' not in fixed:
+            fixed += '</pages>'
+        if '<wiki_structure>' in fixed and '</wiki_structure>' not in fixed:
+            fixed += '</wiki_structure>'
+
+        return fixed
 
     async def generate_page_content(
         self,
