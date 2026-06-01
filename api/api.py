@@ -32,6 +32,14 @@ app.add_middleware(
     allow_headers=["*"],  # Allows all headers
 )
 
+# Add request logging middleware
+@app.middleware("http")
+async def log_requests(request: Request, call_next):
+    logger.info(f"Incoming request: {request.method} {request.url}")
+    response = await call_next(request)
+    logger.info(f"Response status: {response.status_code}")
+    return response
+
 # Helper function to get adalflow root path
 def get_adalflow_default_root_path():
     return os.path.expanduser(os.path.join("~", ".adalflow"))

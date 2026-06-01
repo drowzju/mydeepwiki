@@ -398,14 +398,19 @@ def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = 
                                            If None, will be determined from configuration.
 
     Returns:
-        adal.Sequential: The data transformation pipeline
+        adal.Sequential or None: The data transformation pipeline, or None if RAG is disabled
     """
-    from api.config import get_embedder_config, get_embedder_type
+    from api.config import get_embedder_config, get_embedder_type, is_rag_enabled
+
+    # Check if RAG is enabled
+    if not is_rag_enabled():
+        logger.info("RAG is disabled - no embedder configured")
+        return None
 
     # Handle backward compatibility
     if embedder_type is None and is_ollama_embedder is not None:
         embedder_type = 'ollama' if is_ollama_embedder else None
-    
+
     # Determine embedder type if not specified
     if embedder_type is None:
         embedder_type = get_embedder_type()
@@ -414,6 +419,10 @@ def prepare_data_pipeline(embedder_type: str = None, is_ollama_embedder: bool = 
     embedder_config = get_embedder_config()
 
     embedder = get_embedder(embedder_type=embedder_type)
+
+    if embedder is None:
+        logger.warning("Failed to create embedder - RAG will be disabled")
+        return None
 
     # Choose appropriate processor based on embedder type
     if embedder_type == 'ollama':
@@ -444,15 +453,23 @@ def transform_documents_and_save_to_db(
                                      If None, will be determined from configuration.
         is_ollama_embedder (bool, optional): DEPRECATED. Use embedder_type instead.
                                            If None, will be determined from configuration.
+
+    Returns:
+        LocalDB: The database instance (may have empty transformed data if RAG is disabled)
     """
-    # Get the data transformer
+    # Get the data transformer (may be None if RAG is disabled)
     data_transformer = prepare_data_pipeline(embedder_type, is_ollama_embedder)
 
     # Save the documents to a local database
     db = LocalDB()
-    db.register_transformer(transformer=data_transformer, key="split_and_embed")
-    db.load(documents)
-    db.transform(key="split_and_embed")
+    if data_transformer is not None:
+        db.register_transformer(transformer=data_transformer, key="split_and_embed")
+        db.load(documents)
+        db.transform(key="split_and_embed")
+    else:
+        # RAG is disabled - just load documents without transformation
+        logger.info("RAG is disabled - loading documents without embeddings")
+        db.load(documents)
     os.makedirs(os.path.dirname(db_path), exist_ok=True)
     db.save_state(filepath=db_path)
     return db
@@ -917,6 +934,10 @@ class DatabaseManager:
         )
         logger.info(f"Total documents: {len(documents)}")
         transformed_docs = self.db.get_transformed_data(key="split_and_embed")
+        # If RAG is disabled, transformed_docs will be None or empty
+        if transformed_docs is None:
+            logger.info("No transformed data (RAG may be disabled)")
+            return []
         logger.info(f"Total transformed documents: {len(transformed_docs)}")
         return transformed_docs
 

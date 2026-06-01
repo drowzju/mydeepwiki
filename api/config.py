@@ -13,6 +13,7 @@ from api.bedrock_client import BedrockClient
 from api.google_embedder_client import GoogleEmbedderClient
 from api.azureai_client import AzureAIClient
 from api.dashscope_client import DashscopeClient
+from api.aliyun_coding_client import AliyunCodingClient
 from adalflow import GoogleGenAIClient, OllamaClient
 
 # Get API keys from environment variables
@@ -63,7 +64,8 @@ CLIENT_CLASSES = {
     "OllamaClient": OllamaClient,
     "BedrockClient": BedrockClient,
     "AzureAIClient": AzureAIClient,
-    "DashscopeClient": DashscopeClient
+    "DashscopeClient": DashscopeClient,
+    "AliyunCodingClient": AliyunCodingClient
 }
 
 def replace_env_placeholders(config: Union[Dict[str, Any], List[Any], str, Any]) -> Union[Dict[str, Any], List[Any], str, Any]:
@@ -153,7 +155,7 @@ def load_embedder_config():
 
     # Process client classes
     for key in ["embedder", "embedder_ollama", "embedder_google", "embedder_bedrock"]:
-        if key in embedder_config and "client_class" in embedder_config[key]:
+        if key in embedder_config and embedder_config[key] and "client_class" in embedder_config[key]:
             class_name = embedder_config[key]["client_class"]
             if class_name in CLIENT_CLASSES:
                 embedder_config[key]["model_client"] = CLIENT_CLASSES[class_name]
@@ -235,10 +237,18 @@ def is_bedrock_embedder():
     client_class = embedder_config.get("client_class", "")
     return client_class == "BedrockClient"
 
+# Check if RAG is enabled (requires at least one embedder configuration)
+def is_rag_enabled():
+    """Check if RAG functionality is enabled (requires embedder configuration)."""
+    embedder_config = get_embedder_config()
+    # RAG is enabled if we have a valid embedder configuration with a model client
+    return bool(embedder_config and embedder_config.get("model_client"))
+
+
 def get_embedder_type():
     """
     Get the current embedder type based on configuration.
-    
+
     Returns:
         str: 'bedrock', 'ollama', 'google', or 'openai' (default)
     """

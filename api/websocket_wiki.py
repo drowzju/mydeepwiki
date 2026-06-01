@@ -23,6 +23,7 @@ from api.openai_client import OpenAIClient
 from api.openrouter_client import OpenRouterClient
 from api.azureai_client import AzureAIClient
 from api.dashscope_client import DashscopeClient
+from api.aliyun_coding_client import AliyunCodingClient
 from api.rag import RAG
 
 # Configure logging
@@ -70,7 +71,12 @@ async def handle_websocket_chat(websocket: WebSocket):
     try:
         # Receive and parse the request data
         request_data = await websocket.receive_json()
+        logger.info(f"Received WebSocket request data: {request_data}")
         request = ChatCompletionRequest(**request_data)
+
+        # Log important request parameters
+        logger.info(f"Request provider: {request.provider}, model: {request.model}, repo: {request.repo_url}")
+        logger.info(f"RAG enabled: {request_rag.rag_enabled if 'request_rag' in locals() else 'N/A'}")
 
         # Check if request contains very large input
         input_too_large = False
@@ -108,7 +114,12 @@ async def handle_websocket_chat(websocket: WebSocket):
 
             request_rag.prepare_retriever(request.repo_url, request.type, request.token, excluded_dirs, excluded_files, included_dirs, included_files)
             logger.info(f"Retriever prepared for {request.repo_url}")
-        except ValueError as e:
+        except Exception as e:
+            logger.error(f"Error in prepare_retriever: {str(e)}")
+            logger.exception(e)
+            await websocket.send_text(f"Error preparing retriever: {str(e)}")
+            await websocket.close()
+            return
             if "No valid documents with embeddings found" in str(e):
                 logger.error(f"No valid embeddings found: {str(e)}")
                 await websocket.send_text("Error: No valid document embeddings found. This may be due to embedding size inconsistencies or API errors during document processing. Please try again or check your repository content.")
@@ -204,10 +215,12 @@ async def handle_websocket_chat(websocket: WebSocket):
 
                 # Try to perform RAG retrieval
                 try:
+                    logger.info(f"Starting RAG retrieval with query: {rag_query}")
                     # This will use the actual RAG implementation
                     retrieved_documents = request_rag(rag_query, language=request.language)
+                    logger.info(f"RAG retrieval returned: {type(retrieved_documents)}")
 
-                    if retrieved_documents and retrieved_documents[0].documents:
+                    if retrieved_documents and hasattr(retrieved_documents[0], 'documents'):
                         # Format context for the prompt in a more structured way
                         documents = retrieved_documents[0].documents
                         logger.info(f"Retrieved {len(documents)} documents")
@@ -437,6 +450,23 @@ This file contains...
 
         prompt += f"<query>\n{query}\n</query>\n\nAssistant: "
 
+        # Log prompt information
+        prompt_tokens = len(prompt) // 4  # Rough estimate
+        logger.info(f"Prompt built: ~{prompt_tokens} tokens, {len(prompt)} chars")
+        logger.debug(f"Prompt preview (first 500 chars): {prompt[:500]}...")
+
+        # Validate and set defaults for provider/model
+        if not request.provider:
+            request.provider = "google"
+            logger.warning(f"Provider not specified, using default: {request.provider}")
+        if not request.model:
+            # Get default model from config
+            provider_config = configs.get("providers", {}).get(request.provider, {})
+            request.model = provider_config.get("default_model")
+            logger.warning(f"Model not specified, using default: {request.model}")
+
+        logger.info(f"Using provider={request.provider}, model={request.model}")
+
         model_config = get_model_config(request.provider, request.model)["model_kwargs"]
 
         if request.provider == "ollama":
@@ -447,9 +477,9 @@ This file contains...
                 "model": model_config["model"],
                 "stream": True,
                 "options": {
-                    "temperature": model_config["temperature"],
-                    "top_p": model_config["top_p"],
-                    "num_ctx": model_config["num_ctx"]
+                    "temperature": model_config.get("temperature", 0.7),
+                    "top_p": model_config.get("top_p", 0.8),
+                    "num_ctx": model_config.get("num_ctx", 4096)
                 }
             }
 
@@ -470,7 +500,7 @@ This file contains...
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"]
+                "temperature": model_config.get("temperature", 0.7)
             }
             # Only add top_p if it exists in the model config
             if "top_p" in model_config:
@@ -494,7 +524,7 @@ This file contains...
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"]
+                "temperature": model_config.get("temperature", 0.7)
             }
             # Only add top_p if it exists in the model config
             if "top_p" in model_config:
@@ -534,8 +564,8 @@ This file contains...
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"]
+                "temperature": model_config.get("temperature", 0.7),
+                "top_p": model_config.get("top_p", 0.8)
             }
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
@@ -551,8 +581,25 @@ This file contains...
             model_kwargs = {
                 "model": request.model,
                 "stream": True,
-                "temperature": model_config["temperature"],
-                "top_p": model_config["top_p"]
+                "temperature": model_config.get("temperature", 0.7),
+                "top_p": model_config.get("top_p", 0.8)
+            }
+
+            api_kwargs = model.convert_inputs_to_api_kwargs(
+                input=prompt,
+                model_kwargs=model_kwargs,
+                model_type=ModelType.LLM
+            )
+        elif request.provider == "aliyun_coding":
+            logger.info(f"Using Aliyun Coding with model: {request.model}")
+
+            # Initialize Aliyun Coding client
+            model = AliyunCodingClient()
+            model_kwargs = {
+                "model": request.model,
+                "stream": True,
+                "temperature": model_config.get("temperature", 0.7),
+                "top_p": model_config.get("top_p", 0.8)
             }
 
             api_kwargs = model.convert_inputs_to_api_kwargs(
@@ -565,9 +612,9 @@ This file contains...
             model = genai.GenerativeModel(
                 model_name=model_config["model"],
                 generation_config={
-                    "temperature": model_config["temperature"],
-                    "top_p": model_config["top_p"],
-                    "top_k": model_config["top_k"]
+                    "temperature": model_config.get("temperature", 0.7),
+                    "top_p": model_config.get("top_p", 0.8),
+                    "top_k": model_config.get("top_k", 40)
                 }
             )
 
@@ -681,29 +728,87 @@ This file contains...
                     # Close the WebSocket connection after sending the error message
                     await websocket.close()
             elif request.provider == "dashscope":
+                logger.info(f"Starting Dashscope API call with model: {request.model}")
                 try:
                     # Get the response and handle it properly using the previously created api_kwargs
-                    logger.info("Making Dashscope API call")
+                    logger.info(f"Calling model.acall with api_kwargs: {api_kwargs}")
                     response = await model.acall(
                         api_kwargs=api_kwargs, model_type=ModelType.LLM
                     )
+                    logger.info("model.acall returned successfully, starting to stream response")
+                    chunk_count = 0
                     # DashscopeClient.acall with stream=True returns an async
                     # generator of plain text chunks
                     async for text in response:
                         if text:
                             await websocket.send_text(text)
+                            chunk_count += 1
+                    logger.info(f"Finished streaming {chunk_count} chunks from Dashscope")
                     # Explicitly close the WebSocket connection after the response is complete
                     await websocket.close()
+                    logger.info("WebSocket closed after Dashscope response")
                 except Exception as e_dashscope:
                     logger.error(f"Error with Dashscope API: {str(e_dashscope)}")
+                    logger.exception(e_dashscope)
                     error_msg = (
                         f"\nError with Dashscope API: {str(e_dashscope)}\n\n"
                         "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
                         "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
                     )
-                    await websocket.send_text(error_msg)
-                    # Close the WebSocket connection after sending the error message
+                    try:
+                        await websocket.send_text(error_msg)
+                        await websocket.close()
+                    except Exception as ws_error:
+                        logger.error(f"Failed to send error message or close WebSocket: {ws_error}")
+            elif request.provider == "aliyun_coding":
+                logger.info(f"Starting Aliyun Coding API call with model: {request.model}")
+                try:
+                    # Get the response and handle it properly using the previously created api_kwargs
+                    logger.info(f"Calling model.acall with api_kwargs: {api_kwargs}")
+                    response = await model.acall(
+                        api_kwargs=api_kwargs, model_type=ModelType.LLM
+                    )
+                    logger.info("model.acall returned successfully, starting to stream response")
+                    chunk_count = 0
+                    # AliyunCodingClient.acall with stream=True returns an async
+                    # generator of plain text chunks
+                    async for text in response:
+                        if text:
+                            await websocket.send_text(text)
+                            chunk_count += 1
+                    logger.info(f"Finished streaming {chunk_count} chunks from Aliyun Coding")
+
+                    # If no chunks received, try non-streaming mode as fallback
+                    if chunk_count == 0:
+                        logger.warning("No chunks received from streaming, trying non-streaming mode")
+                        api_kwargs_no_stream = api_kwargs.copy()
+                        api_kwargs_no_stream["stream"] = False
+                        non_stream_response = await model.acall(
+                            api_kwargs=api_kwargs_no_stream, model_type=ModelType.LLM
+                        )
+                        if hasattr(non_stream_response, 'data') and non_stream_response.data:
+                            await websocket.send_text(non_stream_response.data)
+                            logger.info(f"Sent non-streaming response: {len(non_stream_response.data)} chars")
+                        else:
+                            logger.error(f"Non-streaming response has no data: {non_stream_response}")
+                            await websocket.send_text("Error: Empty response from API")
+
+                    # Explicitly close the WebSocket connection after the response is complete
                     await websocket.close()
+                    logger.info("WebSocket closed after Aliyun Coding response")
+                except Exception as e_aliyun:
+                    logger.error(f"Error with Aliyun Coding API: {str(e_aliyun)}")
+                    logger.exception(e_aliyun)
+                    error_msg = (
+                        f"\nError with Aliyun Coding API: {str(e_aliyun)}\n\n"
+                        "Please check that you have set the DASHSCOPE_API_KEY and "
+                        "ALIYUN_CODING_BASE_URL environment variables with valid values."
+                    )
+                    try:
+                        await websocket.send_text(error_msg)
+                        await websocket.close()
+                    except Exception as ws_error:
+                        logger.error(f"Failed to send error message or close WebSocket: {ws_error}")
             else:
                 # Google Generative AI (default provider)
                 response = model.generate_content(prompt, stream=True)
@@ -873,6 +978,35 @@ This file contains...
                                 f"\nError with Dashscope API fallback: {str(e_fallback)}\n\n"
                                 "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
                                 "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
+                            )
+                            await websocket.send_text(error_msg)
+                    elif request.provider == "aliyun_coding":
+                        try:
+                            # Create new api_kwargs with the simplified prompt
+                            fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
+                                input=simplified_prompt,
+                                model_kwargs=model_kwargs,
+                                model_type=ModelType.LLM,
+                            )
+
+                            logger.info("Making fallback Aliyun Coding API call")
+                            fallback_response = await model.acall(
+                                api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
+                            )
+
+                            # AliyunCodingClient.acall (stream=True) returns an async
+                            # generator of text chunks
+                            async for text in fallback_response:
+                                if text:
+                                    await websocket.send_text(text)
+                        except Exception as e_fallback:
+                            logger.error(
+                                f"Error with Aliyun Coding API fallback: {str(e_fallback)}"
+                            )
+                            error_msg = (
+                                f"\nError with Aliyun Coding API fallback: {str(e_fallback)}\n\n"
+                                "Please check that you have set the DASHSCOPE_API_KEY and "
+                                "ALIYUN_CODING_BASE_URL environment variables with valid values."
                             )
                             await websocket.send_text(error_msg)
                     else:

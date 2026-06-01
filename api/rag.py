@@ -189,21 +189,26 @@ class RAG(adal.Component):
         # Initialize components
         self.memory = Memory()
         self.embedder = get_embedder(embedder_type=self.embedder_type)
+        self.rag_enabled = self.embedder is not None
 
-        self_weakref = weakref.ref(self)
-        # Patch: ensure query embedding is always single string for Ollama
-        def single_string_embedder(query):
-            # Accepts either a string or a list, always returns embedding for a single string
-            if isinstance(query, list):
-                if len(query) != 1:
-                    raise ValueError("Ollama embedder only supports a single string")
-                query = query[0]
-            instance = self_weakref()
-            assert instance is not None, "RAG instance is no longer available, but the query embedder was called."
-            return instance.embedder(input=query)
+        if self.rag_enabled:
+            self_weakref = weakref.ref(self)
+            # Patch: ensure query embedding is always single string for Ollama
+            def single_string_embedder(query):
+                # Accepts either a string or a list, always returns embedding for a single string
+                if isinstance(query, list):
+                    if len(query) != 1:
+                        raise ValueError("Ollama embedder only supports a single string")
+                    query = query[0]
+                instance = self_weakref()
+                assert instance is not None, "RAG instance is no longer available, but the query embedder was called."
+                return instance.embedder(input=query)
 
-        # Use single string embedder for Ollama, regular embedder for others
-        self.query_embedder = single_string_embedder if self.is_ollama_embedder else self.embedder
+            # Use single string embedder for Ollama, regular embedder for others
+            self.query_embedder = single_string_embedder if self.is_ollama_embedder else self.embedder
+        else:
+            self.query_embedder = None
+            logger.info("RAG is disabled - no embedder configured")
 
         self.initialize_db_manager()
 
@@ -359,6 +364,14 @@ IMPORTANT FORMATTING RULES:
         """
         self.initialize_db_manager()
         self.repo_url_or_path = repo_url_or_path
+
+        # If RAG is disabled, skip document preparation
+        if not self.rag_enabled:
+            logger.info("RAG is disabled - skipping retriever preparation")
+            self.transformed_docs = []
+            self.retriever = None
+            return
+
         self.transformed_docs = self.db_manager.prepare_database(
             repo_url_or_path,
             type,
@@ -423,6 +436,11 @@ IMPORTANT FORMATTING RULES:
         Returns:
             Tuple of (RAGAnswer, retrieved_documents)
         """
+        # If RAG is disabled, return empty result
+        if not self.rag_enabled or self.retriever is None:
+            logger.info("RAG is disabled - returning empty retrieval result")
+            return None
+
         try:
             retrieved_documents = self.retriever(query)
 

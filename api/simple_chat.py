@@ -11,13 +11,14 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import StreamingResponse
 from pydantic import BaseModel, Field
 
-from api.config import get_model_config, configs, OPENROUTER_API_KEY, OPENAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY
+from api.config import get_model_config, configs, OPENROUTER_API_KEY, OPENAI_API_KEY, AWS_ACCESS_KEY_ID, AWS_SECRET_ACCESS_KEY, is_rag_enabled
 from api.data_pipeline import count_tokens, get_file_content
 from api.openai_client import OpenAIClient
 from api.openrouter_client import OpenRouterClient
 from api.bedrock_client import BedrockClient
 from api.azureai_client import AzureAIClient
 from api.dashscope_client import DashscopeClient
+from api.aliyun_coding_client import AliyunCodingClient
 from api.rag import RAG
 from api.prompts import (
     DEEP_RESEARCH_FIRST_ITERATION_PROMPT,
@@ -64,7 +65,7 @@ class ChatCompletionRequest(BaseModel):
     type: Optional[str] = Field("github", description="Type of repository (e.g., 'github', 'gitlab', 'bitbucket')")
 
     # model parameters
-    provider: str = Field("google", description="Model provider (google, openai, openrouter, ollama, bedrock, azure, dashscope)")
+    provider: str = Field("google", description="Model provider (google, openai, openrouter, ollama, bedrock, azure, dashscope, aliyun_coding)")
     model: Optional[str] = Field(None, description="Model name for the specified provider")
 
     language: Optional[str] = Field("en", description="Language for content generation (e.g., 'en', 'ja', 'zh', 'es', 'kr', 'vi')")
@@ -88,45 +89,49 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                     logger.warning(f"Request exceeds recommended token limit ({tokens} > 7500)")
                     input_too_large = True
 
-        # Create a new RAG instance for this request
-        try:
-            request_rag = RAG(provider=request.provider, model=request.model)
+        # Create a new RAG instance for this request (only if RAG is enabled)
+        request_rag = None
+        if is_rag_enabled():
+            try:
+                request_rag = RAG(provider=request.provider, model=request.model)
 
-            # Extract custom file filter parameters if provided
-            excluded_dirs = None
-            excluded_files = None
-            included_dirs = None
-            included_files = None
+                # Extract custom file filter parameters if provided
+                excluded_dirs = None
+                excluded_files = None
+                included_dirs = None
+                included_files = None
 
-            if request.excluded_dirs:
-                excluded_dirs = [unquote(dir_path) for dir_path in request.excluded_dirs.split('\n') if dir_path.strip()]
-                logger.info(f"Using custom excluded directories: {excluded_dirs}")
-            if request.excluded_files:
-                excluded_files = [unquote(file_pattern) for file_pattern in request.excluded_files.split('\n') if file_pattern.strip()]
-                logger.info(f"Using custom excluded files: {excluded_files}")
-            if request.included_dirs:
-                included_dirs = [unquote(dir_path) for dir_path in request.included_dirs.split('\n') if dir_path.strip()]
-                logger.info(f"Using custom included directories: {included_dirs}")
-            if request.included_files:
-                included_files = [unquote(file_pattern) for file_pattern in request.included_files.split('\n') if file_pattern.strip()]
-                logger.info(f"Using custom included files: {included_files}")
+                if request.excluded_dirs:
+                    excluded_dirs = [unquote(dir_path) for dir_path in request.excluded_dirs.split('\n') if dir_path.strip()]
+                    logger.info(f"Using custom excluded directories: {excluded_dirs}")
+                if request.excluded_files:
+                    excluded_files = [unquote(file_pattern) for file_pattern in request.excluded_files.split('\n') if file_pattern.strip()]
+                    logger.info(f"Using custom excluded files: {excluded_files}")
+                if request.included_dirs:
+                    included_dirs = [unquote(dir_path) for dir_path in request.included_dirs.split('\n') if dir_path.strip()]
+                    logger.info(f"Using custom included directories: {included_dirs}")
+                if request.included_files:
+                    included_files = [unquote(file_pattern) for file_pattern in request.included_files.split('\n') if file_pattern.strip()]
+                    logger.info(f"Using custom included files: {included_files}")
 
-            request_rag.prepare_retriever(request.repo_url, request.type, request.token, excluded_dirs, excluded_files, included_dirs, included_files)
-            logger.info(f"Retriever prepared for {request.repo_url}")
-        except ValueError as e:
-            if "No valid documents with embeddings found" in str(e):
-                logger.error(f"No valid embeddings found: {str(e)}")
-                raise HTTPException(status_code=500, detail="No valid document embeddings found. This may be due to embedding size inconsistencies or API errors during document processing. Please try again or check your repository content.")
-            else:
-                logger.error(f"ValueError preparing retriever: {str(e)}")
-                raise HTTPException(status_code=500, detail=f"Error preparing retriever: {str(e)}")
-        except Exception as e:
-            logger.error(f"Error preparing retriever: {str(e)}")
-            # Check for specific embedding-related errors
-            if "All embeddings should be of the same size" in str(e):
-                raise HTTPException(status_code=500, detail="Inconsistent embedding sizes detected. Some documents may have failed to embed properly. Please try again.")
-            else:
-                raise HTTPException(status_code=500, detail=f"Error preparing retriever: {str(e)}")
+                request_rag.prepare_retriever(request.repo_url, request.type, request.token, excluded_dirs, excluded_files, included_dirs, included_files)
+                logger.info(f"Retriever prepared for {request.repo_url}")
+            except ValueError as e:
+                if "No valid documents with embeddings found" in str(e):
+                    logger.error(f"No valid embeddings found: {str(e)}")
+                    raise HTTPException(status_code=500, detail="No valid document embeddings found. This may be due to embedding size inconsistencies or API errors during document processing. Please try again or check your repository content.")
+                else:
+                    logger.error(f"ValueError preparing retriever: {str(e)}")
+                    raise HTTPException(status_code=500, detail=f"Error preparing retriever: {str(e)}")
+            except Exception as e:
+                logger.error(f"Error preparing retriever: {str(e)}")
+                # Check for specific embedding-related errors
+                if "All embeddings should be of the same size" in str(e):
+                    raise HTTPException(status_code=500, detail="Inconsistent embedding sizes detected. Some documents may have failed to embed properly. Please try again.")
+                else:
+                    raise HTTPException(status_code=500, detail=f"Error preparing retriever: {str(e)}")
+        else:
+            logger.info("RAG is disabled - running in no-embedding mode")
 
         # Validate request
         if not request.messages or len(request.messages) == 0:
@@ -136,17 +141,18 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         if last_message.role != "user":
             raise HTTPException(status_code=400, detail="Last message must be from the user")
 
-        # Process previous messages to build conversation history
-        for i in range(0, len(request.messages) - 1, 2):
-            if i + 1 < len(request.messages):
-                user_msg = request.messages[i]
-                assistant_msg = request.messages[i + 1]
+        # Process previous messages to build conversation history (only if RAG is enabled)
+        if request_rag:
+            for i in range(0, len(request.messages) - 1, 2):
+                if i + 1 < len(request.messages):
+                    user_msg = request.messages[i]
+                    assistant_msg = request.messages[i + 1]
 
-                if user_msg.role == "user" and assistant_msg.role == "assistant":
-                    request_rag.memory.add_dialog_turn(
-                        user_query=user_msg.content,
-                        assistant_response=assistant_msg.content
-                    )
+                    if user_msg.role == "user" and assistant_msg.role == "assistant":
+                        request_rag.memory.add_dialog_turn(
+                            user_query=user_msg.content,
+                            assistant_response=assistant_msg.content
+                        )
 
         # Check if this is a Deep Research request
         is_deep_research = False
@@ -184,11 +190,11 @@ async def chat_completions_stream(request: ChatCompletionRequest):
         # Get the query from the last message
         query = last_message.content
 
-        # Only retrieve documents if input is not too large
+        # Only retrieve documents if RAG is enabled and input is not too large
         context_text = ""
         retrieved_documents = None
 
-        if not input_too_large:
+        if not input_too_large and request_rag:
             try:
                 # If filePath exists, modify the query for RAG to focus on the file
                 rag_query = query
@@ -300,9 +306,10 @@ async def chat_completions_stream(request: ChatCompletionRequest):
 
         # Format conversation history
         conversation_history = ""
-        for turn_id, turn in request_rag.memory().items():
-            if not isinstance(turn_id, int) and hasattr(turn, 'user_query') and hasattr(turn, 'assistant_response'):
-                conversation_history += f"<turn>\n<user>{turn.user_query.query_str}</user>\n<assistant>{turn.assistant_response.response_str}</assistant>\n</turn>\n"
+        if request_rag:
+            for turn_id, turn in request_rag.memory().items():
+                if not isinstance(turn_id, int) and hasattr(turn, 'user_query') and hasattr(turn, 'assistant_response'):
+                    conversation_history += f"<turn>\n<user>{turn.user_query.query_str}</user>\n<assistant>{turn.assistant_response.response_str}</assistant>\n</turn>\n"
 
         # Create the prompt with context
         prompt = f"/no_think {system_prompt}\n\n"
@@ -449,6 +456,23 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                 model_kwargs=model_kwargs,
                 model_type=ModelType.LLM,
             )
+        elif request.provider == "aliyun_coding":
+            logger.info(f"Using Aliyun Coding Plan with model: {request.model}")
+
+            model = AliyunCodingClient()
+            model_kwargs = {
+                "model": request.model,
+                "stream": False,  # Aliyun Coding doesn't support streaming yet
+                "temperature": model_config["temperature"],
+                "top_p": model_config["top_p"],
+                "max_tokens": model_config.get("max_tokens", 4096),
+            }
+
+            api_kwargs = model.convert_inputs_to_api_kwargs(
+                input=prompt,
+                model_kwargs=model_kwargs,
+                model_type=ModelType.LLM,
+            )
         else:
             # Initialize Google Generative AI model (default provider)
             model = genai.GenerativeModel(
@@ -548,6 +572,24 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                             f"\nError with Dashscope API: {str(e_dashscope)}\n\n"
                             "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
                             "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
+                        )
+                elif request.provider == "aliyun_coding":
+                    try:
+                        logger.info("Making Aliyun Coding Plan API call")
+                        # AliyunCodingClient returns GeneratorOutput directly (not streaming)
+                        result = await model.acall(
+                            api_kwargs=api_kwargs, model_type=ModelType.LLM
+                        )
+                        # result is GeneratorOutput, extract the data
+                        if hasattr(result, 'data') and result.data:
+                            yield result.data
+                        else:
+                            yield str(result)
+                    except Exception as e_aliyun:
+                        logger.error(f"Error with Aliyun Coding API: {str(e_aliyun)}")
+                        yield (
+                            f"\nError with Aliyun Coding API: {str(e_aliyun)}\n\n"
+                            "Please check that you have set the DASHSCOPE_API_KEY environment variable with a valid value."
                         )
                 else:
                     # Google Generative AI (default provider)
@@ -709,6 +751,33 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                                     f"\nError with Dashscope API fallback: {str(e_fallback)}\n\n"
                                     "Please check that you have set the DASHSCOPE_API_KEY (and optionally "
                                     "DASHSCOPE_WORKSPACE_ID) environment variables with valid values."
+                                )
+                        elif request.provider == "aliyun_coding":
+                            try:
+                                # Create new api_kwargs with the simplified prompt
+                                fallback_api_kwargs = model.convert_inputs_to_api_kwargs(
+                                    input=simplified_prompt,
+                                    model_kwargs=model_kwargs,
+                                    model_type=ModelType.LLM,
+                                )
+
+                                logger.info("Making fallback Aliyun Coding API call")
+                                fallback_response = await model.acall(
+                                    api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
+                                )
+
+                                # AliyunCodingClient returns GeneratorOutput
+                                if hasattr(fallback_response, 'data') and fallback_response.data:
+                                    yield fallback_response.data
+                                else:
+                                    yield str(fallback_response)
+                            except Exception as e_fallback:
+                                logger.error(
+                                    f"Error with Aliyun Coding API fallback: {str(e_fallback)}"
+                                )
+                                yield (
+                                    f"\nError with Aliyun Coding API fallback: {str(e_fallback)}\n\n"
+                                    "Please check that you have set the DASHSCOPE_API_KEY environment variable with a valid value."
                                 )
                         else:
                             # Google Generative AI fallback (default provider)

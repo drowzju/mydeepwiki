@@ -19,6 +19,28 @@
         }
       }
     },
+    "aliyun_coding": {
+      "client_class": "AliyunCodingClient",
+      "default_model": "kimi-k2.5",
+      "supportsCustomModel": true,
+      "models": {
+        "kimi-k2.5": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 4096
+        },
+        "qwen3.6-plus": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 4096
+        },
+        "glm-5": {
+          "temperature": 0.7,
+          "top_p": 0.8,
+          "max_tokens": 4096
+        }
+      }
+    },
     "google": {
       "default_model": "gemini-2.5-flash",
       "supportsCustomModel": true,

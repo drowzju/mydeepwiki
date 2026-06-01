@@ -1,10 +1,10 @@
 import type { NextConfig } from "next";
 
-const TARGET_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'http://localhost:8001';
+const TARGET_SERVER_BASE_URL = process.env.SERVER_BASE_URL || 'http://localhost:8091';
 
 const nextConfig: NextConfig = {
   /* config options here */
-  output: 'standalone',
+  // output: 'standalone',  // 临时禁用 standalone 模式
   // Optimize build for Docker
   experimental: {
     optimizePackageImports: ['@mermaid-js/mermaid', 'react-syntax-highlighter'],

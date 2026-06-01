@@ -45,6 +45,8 @@
     "providerOpenAI": "OpenAI",
     "providerOpenRouter": "OpenRouter",
     "providerOllama": "Ollama (本地)",
+    "providerDashscope": "DashScope",
+    "providerAliyun_coding": "阿里云 Coding",
     "localOllama": "本地Ollama模型",
     "experimental": "实验性",
     "useOpenRouter": "使用OpenRouter API",
