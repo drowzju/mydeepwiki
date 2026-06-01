@@ -480,10 +480,42 @@ Examples:
                        help="Comma-separated list of directories to exclude")
     parser.add_argument("--excluded-files", default="",
                        help="Comma-separated list of file patterns to exclude")
+    parser.add_argument("--no-rag", action="store_true",
+                       help="Disable RAG (no embedding). Useful when you don't have embedder API keys")
     parser.add_argument("--no-cache", action="store_true",
                        help="Don't save to server cache")
 
     args = parser.parse_args()
+
+    # Check for common embedder configuration issues
+    if not os.environ.get('OPENAI_API_KEY') and not os.environ.get('GOOGLE_API_KEY'):
+        embedder_type = os.environ.get('DEEPWIKI_EMBEDDER_TYPE', 'openai')
+        if embedder_type == 'openai' and not args.no_rag:
+            print("""
+⚠️  WARNING: No embedder API key found!
+
+The backend needs an embedder to vectorize the repository. You have several options:
+
+1. Set DEEPWIKI_EMBEDDER_TYPE=ollama to use local Ollama (recommended, free):
+   export DEEPWIKI_EMBEDDER_TYPE=ollama
+   # Make sure Ollama is running with an embedding model
+
+2. Set Google API key for Google embedder:
+   export GOOGLE_API_KEY=your_key
+   export DEEPWIKI_EMBEDDER_TYPE=google
+
+3. Set OpenAI API key:
+   export OPENAI_API_KEY=your_key
+
+4. Disable RAG (faster but lower quality):
+   python wiki_builder.py owner/repo --no-rag
+
+For more info, see: https://github.com/dromara/MilvusPlus
+""")
+            if not args.no_rag:
+                response = input("Continue anyway? [y/N]: ")
+                if response.lower() != 'y':
+                    sys.exit(1)
 
     # Parse repo URL
     repo_url = args.repo
