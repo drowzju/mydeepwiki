@@ -401,6 +401,27 @@ class WikiBuilder:
             print("No wiki data to save")
             return False
 
+        # Build wiki_structure with content from generated_pages
+        wiki_structure_with_content = {
+            "id": self.wiki_structure.get("id", "wiki"),
+            "title": self.wiki_structure.get("title", ""),
+            "description": self.wiki_structure.get("description", ""),
+            "pages": []
+        }
+
+        for page in self.wiki_structure.get("pages", []):
+            page_id = page.get("id", "")
+            generated_page = self.generated_pages.get(page_id, {})
+            wiki_structure_with_content["pages"].append({
+                "id": page_id,
+                "title": page.get("title", ""),
+                "description": page.get("description", ""),
+                "importance": page.get("importance", "medium"),
+                "filePaths": page.get("filePaths", []),
+                "relatedPages": page.get("relatedPages", []),
+                "content": generated_page.get("content", "")  # Add content from generated_pages
+            })
+
         cache_data = {
             "repo": {
                 "owner": repo_owner,
@@ -411,7 +432,7 @@ class WikiBuilder:
                 "repoUrl": f"https://{repo_type}.com/{repo_owner}/{repo_name}"
             },
             "language": language,
-            "wiki_structure": self.wiki_structure,
+            "wiki_structure": wiki_structure_with_content,
             "generated_pages": self.generated_pages,
             "provider": provider,
             "model": model

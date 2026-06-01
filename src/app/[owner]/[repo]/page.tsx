@@ -939,13 +939,51 @@ IMPORTANT:
          throw new Error('The specified Ollama embedding model was not found. Please ensure the model is installed locally or select a different embedding model in the configuration.');
        }
 
+      // Check for various backend error patterns
+      if (responseText.includes('Error preparing retriever')) {
+        throw new Error(`RAG initialization failed: ${responseText.substring(0, 300)}. Try disabling RAG or check your embedder configuration.`);
+      }
+
+      if (responseText.includes('No valid document embeddings found')) {
+        setEmbeddingError(true);
+        throw new Error('No valid document embeddings found. This may be due to embedding size inconsistencies or API errors. Try disabling RAG or check your embedder API keys.');
+      }
+
+      if (responseText.includes('Inconsistent embedding sizes')) {
+        setEmbeddingError(true);
+        throw new Error('Inconsistent embedding sizes detected. Try disabling RAG or check your embedder configuration.');
+      }
+
+      if (responseText.includes('No messages provided')) {
+        throw new Error('Request error: No messages provided. Please refresh the page and try again.');
+      }
+
+      if (responseText.includes('Last message must be from the user')) {
+        throw new Error('Request error: Invalid message sequence. Please refresh the page and try again.');
+      }
+
         // Clean up markdown delimiters
       responseText = responseText.replace(/^```(?:xml)?\s*/i, '').replace(/```\s*$/i, '');
+
+      // Debug: log the response
+      console.log('Raw response:', responseText);
+      console.log('Response length:', responseText.length);
+
+      // Check for common error patterns
+      if (responseText.includes('Error:') || responseText.startsWith('Error')) {
+        throw new Error(`AI model returned an error: ${responseText.substring(0, 200)}`);
+      }
+
+      if (responseText.trim().length === 0) {
+        throw new Error('AI model returned empty response. Please check your API key and model configuration.');
+      }
 
       // Extract wiki structure from response
       const xmlMatch = responseText.match(/<wiki_structure>[\s\S]*?<\/wiki_structure>/m);
       if (!xmlMatch) {
-        throw new Error('No valid XML found in response');
+        // Log the first 500 chars to help debug
+        console.error('Response preview (first 500 chars):', responseText.substring(0, 500));
+        throw new Error(`No valid XML found in response. Response preview: ${responseText.substring(0, 200)}...`);
       }
 
       let xmlText = xmlMatch[0];
