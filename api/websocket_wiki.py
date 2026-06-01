@@ -71,12 +71,10 @@ async def handle_websocket_chat(websocket: WebSocket):
     try:
         # Receive and parse the request data
         request_data = await websocket.receive_json()
-        logger.info(f"Received WebSocket request data: {request_data}")
         request = ChatCompletionRequest(**request_data)
 
         # Log important request parameters
-        logger.info(f"Request provider: {request.provider}, model: {request.model}, repo: {request.repo_url}")
-        logger.info(f"RAG enabled: {request_rag.rag_enabled if 'request_rag' in locals() else 'N/A'}")
+        logger.debug(f"Request provider: {request.provider}, model: {request.model}, repo: {request.repo_url}")
 
         # Check if request contains very large input
         input_too_large = False
@@ -101,16 +99,16 @@ async def handle_websocket_chat(websocket: WebSocket):
 
             if request.excluded_dirs:
                 excluded_dirs = [unquote(dir_path) for dir_path in request.excluded_dirs.split('\n') if dir_path.strip()]
-                logger.info(f"Using custom excluded directories: {excluded_dirs}")
+                logger.debug(f"Using custom excluded directories: {excluded_dirs}")
             if request.excluded_files:
                 excluded_files = [unquote(file_pattern) for file_pattern in request.excluded_files.split('\n') if file_pattern.strip()]
-                logger.info(f"Using custom excluded files: {excluded_files}")
+                logger.debug(f"Using custom excluded files: {excluded_files}")
             if request.included_dirs:
                 included_dirs = [unquote(dir_path) for dir_path in request.included_dirs.split('\n') if dir_path.strip()]
-                logger.info(f"Using custom included directories: {included_dirs}")
+                logger.debug(f"Using custom included directories: {included_dirs}")
             if request.included_files:
                 included_files = [unquote(file_pattern) for file_pattern in request.included_files.split('\n') if file_pattern.strip()]
-                logger.info(f"Using custom included files: {included_files}")
+                logger.debug(f"Using custom included files: {included_files}")
 
             request_rag.prepare_retriever(request.repo_url, request.type, request.token, excluded_dirs, excluded_files, included_dirs, included_files)
             logger.info(f"Retriever prepared for {request.repo_url}")
@@ -452,8 +450,7 @@ This file contains...
 
         # Log prompt information
         prompt_tokens = len(prompt) // 4  # Rough estimate
-        logger.info(f"Prompt built: ~{prompt_tokens} tokens, {len(prompt)} chars")
-        logger.debug(f"Prompt preview (first 500 chars): {prompt[:500]}...")
+        logger.debug(f"Prompt built: ~{prompt_tokens} tokens, {len(prompt)} chars")
 
         # Validate and set defaults for provider/model
         if not request.provider:
@@ -465,7 +462,7 @@ This file contains...
             request.model = provider_config.get("default_model")
             logger.warning(f"Model not specified, using default: {request.model}")
 
-        logger.info(f"Using provider={request.provider}, model={request.model}")
+        logger.debug(f"Using provider={request.provider}, model={request.model}")
 
         model_config = get_model_config(request.provider, request.model)["model_kwargs"]
 
@@ -728,25 +725,18 @@ This file contains...
                     # Close the WebSocket connection after sending the error message
                     await websocket.close()
             elif request.provider == "dashscope":
-                logger.info(f"Starting Dashscope API call with model: {request.model}")
+                logger.debug(f"Starting Dashscope API call with model: {request.model}")
                 try:
-                    # Get the response and handle it properly using the previously created api_kwargs
-                    logger.info(f"Calling model.acall with api_kwargs: {api_kwargs}")
                     response = await model.acall(
                         api_kwargs=api_kwargs, model_type=ModelType.LLM
                     )
-                    logger.info("model.acall returned successfully, starting to stream response")
                     chunk_count = 0
-                    # DashscopeClient.acall with stream=True returns an async
-                    # generator of plain text chunks
                     async for text in response:
                         if text:
                             await websocket.send_text(text)
                             chunk_count += 1
-                    logger.info(f"Finished streaming {chunk_count} chunks from Dashscope")
-                    # Explicitly close the WebSocket connection after the response is complete
+                    logger.debug(f"Finished streaming {chunk_count} chunks from Dashscope")
                     await websocket.close()
-                    logger.info("WebSocket closed after Dashscope response")
                 except Exception as e_dashscope:
                     logger.error(f"Error with Dashscope API: {str(e_dashscope)}")
                     logger.exception(e_dashscope)
@@ -761,24 +751,18 @@ This file contains...
                     except Exception as ws_error:
                         logger.error(f"Failed to send error message or close WebSocket: {ws_error}")
             elif request.provider == "aliyun_coding":
-                logger.info(f"Starting Aliyun Coding API call with model: {request.model}")
+                logger.debug(f"Starting Aliyun Coding API call with model: {request.model}")
                 try:
-                    # Get the response using non-streaming mode
-                    logger.info(f"Calling model.acall with api_kwargs: {api_kwargs}")
                     response = await model.acall(
                         api_kwargs=api_kwargs, model_type=ModelType.LLM
                     )
-                    logger.info("model.acall returned successfully")
                     chunk_count = 0
-                    # AliyunCodingClient returns an async generator with single result
                     async for text in response:
                         if text:
                             await websocket.send_text(text)
                             chunk_count += 1
-                    logger.info(f"Finished streaming {chunk_count} chunks from Aliyun Coding")
-                    # Explicitly close the WebSocket connection after the response is complete
+                    logger.debug(f"Finished streaming {chunk_count} chunks from Aliyun Coding")
                     await websocket.close()
-                    logger.info("WebSocket closed after Aliyun Coding response")
                 except Exception as e_aliyun:
                     logger.error(f"Error with Aliyun Coding API: {str(e_aliyun)}")
                     logger.exception(e_aliyun)
@@ -972,12 +956,10 @@ This file contains...
                                 model_type=ModelType.LLM,
                             )
 
-                            logger.info("Making fallback Aliyun Coding API call")
                             fallback_response = await model.acall(
                                 api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
                             )
 
-                            # AliyunCodingClient returns async generator with single result
                             async for text in fallback_response:
                                 if text:
                                     await websocket.send_text(text)
