@@ -118,16 +118,6 @@ async def handle_websocket_chat(websocket: WebSocket):
             await websocket.send_text(f"Error preparing retriever: {str(e)}")
             await websocket.close()
             return
-            if "No valid documents with embeddings found" in str(e):
-                logger.error(f"No valid embeddings found: {str(e)}")
-                await websocket.send_text("Error: No valid document embeddings found. This may be due to embedding size inconsistencies or API errors during document processing. Please try again or check your repository content.")
-                await websocket.close()
-                return
-            else:
-                logger.error(f"ValueError preparing retriever: {str(e)}")
-                await websocket.send_text(f"Error preparing retriever: {str(e)}")
-                await websocket.close()
-                return
         except Exception as e:
             logger.error(f"Error preparing retriever: {str(e)}")
             # Check for specific embedding-related errors

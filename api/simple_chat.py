@@ -576,20 +576,20 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                 elif request.provider == "aliyun_coding":
                     try:
                         logger.info("Making Aliyun Coding Plan API call")
-                        # AliyunCodingClient returns GeneratorOutput directly (not streaming)
-                        result = await model.acall(
+                        # AliyunCodingClient.acall returns an async generator
+                        response = await model.acall(
                             api_kwargs=api_kwargs, model_type=ModelType.LLM
                         )
-                        # result is GeneratorOutput, extract the data
-                        if hasattr(result, 'data') and result.data:
-                            yield result.data
-                        else:
-                            yield str(result)
+                        # Iterate over the async generator to get the text
+                        async for text in response:
+                            if text:
+                                yield text
                     except Exception as e_aliyun:
                         logger.error(f"Error with Aliyun Coding API: {str(e_aliyun)}")
                         yield (
                             f"\nError with Aliyun Coding API: {str(e_aliyun)}\n\n"
-                            "Please check that you have set the DASHSCOPE_API_KEY environment variable with a valid value."
+                            "Please check that you have set the DASHSCOPE_API_KEY and "
+                            "ALIYUN_CODING_BASE_URL environment variables with valid values."
                         )
                 else:
                     # Google Generative AI (default provider)
@@ -766,18 +766,18 @@ async def chat_completions_stream(request: ChatCompletionRequest):
                                     api_kwargs=fallback_api_kwargs, model_type=ModelType.LLM
                                 )
 
-                                # AliyunCodingClient returns GeneratorOutput
-                                if hasattr(fallback_response, 'data') and fallback_response.data:
-                                    yield fallback_response.data
-                                else:
-                                    yield str(fallback_response)
+                                # AliyunCodingClient.acall returns an async generator
+                                async for text in fallback_response:
+                                    if text:
+                                        yield text
                             except Exception as e_fallback:
                                 logger.error(
                                     f"Error with Aliyun Coding API fallback: {str(e_fallback)}"
                                 )
                                 yield (
                                     f"\nError with Aliyun Coding API fallback: {str(e_fallback)}\n\n"
-                                    "Please check that you have set the DASHSCOPE_API_KEY environment variable with a valid value."
+                                    "Please check that you have set the DASHSCOPE_API_KEY and "
+                                    "ALIYUN_CODING_BASE_URL environment variables with valid values."
                                 )
                         else:
                             # Google Generative AI fallback (default provider)
